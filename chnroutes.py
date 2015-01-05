@@ -7,6 +7,83 @@ import argparse
 import math
 import textwrap
 
+def generate_netsh(metric):
+    results = fetch_ip_data()
+    upscript_header=textwrap.dedent("""@echo off
+for /F "tokens=6" %%* in ('netsh int ipv4 show route ^| findstr "\\<0.0.0.0\\>"') do set "gw=%%*"
+for /F "tokens=5" %%* in ('netsh int ipv4 show route ^| findstr "\\<0.0.0.0\\>"') do set "interface=%%*"
+set tmpfile=%temp%\\routes.txt
+    
+    """)
+
+    upfile = open("add_route.bat", "w")
+    downfile = open("del_route.bat","w")
+
+    upfile.write(upscript_header)
+    upfile.write("\n")
+    downfile.write(upscript_header)
+    downfile.write("\n")
+    
+    upfile.write("echo pushd interface ipv4 > %tmpfile%\n")
+    downfile.write("echo pushd interface ipv4 > %tmpfile%\n")
+
+    for ip,_,prefix in results:
+        t1="echo add route %s/%d %%interface%% %%gw%% metric=%d store=active >> %%tmpfile%%\n" % (ip, prefix, metric)
+        upfile.write(t1)
+
+        t2="echo del route %s/%d %%interface%% %%gw%% >> %%tmpfile%%\n" % (ip, prefix)
+        downfile.write(t2)
+
+    upfile.write("netsh -f %tmpfile%\n")
+    upfile.write("del %tmpfile%\n")
+
+    downfile.write("netsh -f %tmpfile%\n")
+    downfile.write("del %tmpfile%\n")
+
+    upfile.close()
+    downfile.close()
+
+def generate_iproute2(metric):
+    results=fetch_ip_data()
+    upscript_header=textwrap.dedent("""\
+    #!/bin/bash
+    export PATH="/bin:/sbin:/usr/sbin:/usr/bin"
+    
+    OLDGW=`ip route show | grep '^default' | sed -e 's/default via \\([^ ]*\\).*/\\1/'`
+    
+    if [ $OLDGW == '' ]; then
+        exit 0
+    fi
+    
+    ip --batch <<EOF
+    """)
+    
+    downscript_header=textwrap.dedent("""\
+    #!/bin/bash
+    export PATH="/bin:/sbin:/usr/sbin:/usr/bin"
+    
+    ip --batch <<EOF
+    """)
+    
+    upfile=open('add_route.sh','wb')
+    downfile=open('del_route.sh','wb')
+    
+    upfile.write(upscript_header)
+    upfile.write('\n')
+    downfile.write(downscript_header)
+    downfile.write('\n')
+    
+    for ip,_,prefix in results:
+        t1 = "route add %s/%d via $OLDGW\n" % (ip, prefix)
+        t2 = "route del %s/%d\n" % (ip, prefix)
+        upfile.write(t1)
+        downfile.write(t2)
+
+    upfile.write("EOF\n")
+    downfile.write("EOF\n")
+
+    upfile.close()
+    downfile.close()
 
 def generate_ovpn(metric):
     results = fetch_ip_data()  
@@ -255,6 +332,10 @@ if __name__=='__main__':
         generate_win(args.metric)
     elif args.platform.lower() == 'android':
         generate_android(args.metric)
+    elif args.platform.lower() == 'netsh':
+        generate_netsh(args.metric)
+    elif args.platform.lower() == 'iproute2':
+        generate_iproute2(args.metric)
     else:
         print>>sys.stderr, "Platform %s is not supported."%args.platform
         exit(1)
