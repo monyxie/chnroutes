@@ -7,6 +7,11 @@ import argparse
 import math
 import textwrap
 
+try:
+    import netaddr
+except ImportError:
+    netaddr = None
+    print """WARNING: package "netaddr" not found, routes won't be merged."""
 
 def generate_ovpn(metric):
     results = fetch_ip_data()  
@@ -227,6 +232,31 @@ def fetch_ip_data():
          
     return results
 
+
+def fetch_ip_data_netaddr():
+    #fetch data from apnic
+    print "Fetching data from apnic.net, it might take a few minutes, please wait..."
+    url=r'http://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest'
+    data=urllib2.urlopen(url).read()
+    
+    cnregex=re.compile(r'apnic\|cn\|ipv4\|[0-9\.]+\|[0-9]+\|[0-9]+\|a.*',re.IGNORECASE)
+    cndata=cnregex.findall(data)
+    
+    results=[]
+
+    for item in cndata:
+        unit_items=item.split('|')
+        starting_ip=unit_items[3]
+        num_ip=int(unit_items[4])
+        results.append('%s/%d' % (starting_ip, 32-int(math.log(num_ip,2))))
+
+    merged_results = netaddr.cidr_merge(results)
+
+         
+    return [(str(a.ip), str(a.netmask), a.prefixlen) for a in merged_results]
+
+if netaddr is not None:
+    fetch_ip_data = fetch_ip_data_netaddr
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description="Generate routing rules for vpn.")
